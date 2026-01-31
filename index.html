@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Helsby Road Walkthrough</title>
+  <style>
+    html,body { margin:0; height:100%; overflow:hidden; background:#000; touch-action:none; }
+    #c { width:100%; height:100%; display:block; }
+    #status{position:fixed;left:12px;top:12px;right:12px;z-index:10;padding:10px 12px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.15);border-radius:12px;font-size:14px;line-height:1.35;}
+    #status.ok{display:none;}
+    .hud { position:fixed; left:0; top:0; right:0; pointer-events:none; color:#fff; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; }
+    .badge { position:fixed; left:12px; top:12px; background:rgba(0,0,0,.45); padding:10px 12px; border-radius:14px; font-size:13px; pointer-events:none; }
+    .btns { position:fixed; right:12px; top:12px; display:flex; gap:8px; pointer-events:auto; }
+    button { border:0; border-radius:14px; padding:10px 12px; background:rgba(255,255,255,.12); color:#fff; font-weight:600; }
+    button:active { transform:scale(.98); }
+    .joy { position:fixed; bottom:18px; width:140px; height:140px; border-radius:999px; background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.15); pointer-events:auto; touch-action:none; }
+    #move { left:18px; }
+    #look { right:18px; }
+    .stick { position:absolute; left:50%; top:50%; width:62px; height:62px; margin-left:-31px; margin-top:-31px; border-radius:999px; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.18); }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+  <div id="status">Loading…</div>
+
+<div class="hud">
+  <div class="badge">
+    <div style="font-weight:700; margin-bottom:4px;">Walkthrough (mobile)</div>
+    <div style="opacity:.9;">Left joystick: move • Right joystick: look</div>
+  </div>
+  <div class="btns">
+    <button id="ground">Ground</button>
+    <button id="up">Upstairs</button>
+    <button id="reset">Reset</button>
+  </div>
+</div>
+
+<div id="move" class="joy"><div class="stick"></div></div>
+<div id="look" class="joy"><div class="stick"></div></div>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
+import { GLTFLoader } from "https://unpkg.com/three@0.161.0/examples/jsm/loaders/GLTFLoader.js";
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 8, 40);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 200);
+camera.position.set(0, 1.6, 3.0);
+
+const yaw = new THREE.Object3D();
+const pitch = new THREE.Object3D();
+yaw.add(pitch);
+pitch.add(camera);
+scene.add(yaw);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x202020, 1.1);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(5, 10, 3);
+scene.add(dir);
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color:0x111111, roughness:1, metalness:0 })
+);
+floor.rotation.x = -Math.PI/2;
+floor.position.y = -2.88;
+scene.add(floor);
+
+let model;
+const loader = new GLTFLoader();
+loader.load("./helsby_model_v3.glb", (gltf) => {
+  model = gltf.scene;
+  model.traverse(o => {
+    if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; }
+  });
+  scene.add(model);
+  statusEl.classList.add("ok");
+}, undefined, (err) => {
+  console.error(err);
+  alert("Model failed to load. If you're opening from a file manager, use a small local web server instead.");
+}, (xhr) => {
+  if (xhr && xhr.total) {
+    const pct = Math.round((xhr.loaded / xhr.total) * 100);
+    statusEl.textContent = `Loading model… ${pct}%`;
+  } else {
+    statusEl.textContent = "Loading model…";
+  }
+}, (err) => {
+  console.error(err);
+  statusEl.textContent = "Couldn’t load the 3D model. Most common causes: missing helsby_model_v3.glb upload, blocked file type, or slow network. Try re-uploading all files (index.html + helsby_model_v3.glb) to the same folder, then refresh.";
+});
+
+function resize() {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener("resize", resize);
+
+// --- Simple touch joysticks ---
+function makeJoystick(el) {
+  const stick = el.querySelector(".stick");
+  let active = false;
+  let id = null;
+  let cx=0, cy=0;
+  let val = {x:0, y:0};
+
+  function setStick(dx, dy) {
+    const max = 52;
+    const len = Math.hypot(dx, dy);
+    const k = len > max ? max/len : 1;
+    dx *= k; dy *= k;
+    stick.style.transform = `translate(${dx}px, ${dy}px)`;
+    val.x = dx/max;
+    val.y = dy/max;
+  }
+  function resetStick() {
+    stick.style.transform = "translate(0px, 0px)";
+    val.x = 0; val.y = 0;
+  }
+
+  el.addEventListener("pointerdown", (e) => {
+    active = true; id = e.pointerId;
+    el.setPointerCapture(id);
+    const r = el.getBoundingClientRect();
+    cx = r.left + r.width/2;
+    cy = r.top + r.height/2;
+    setStick(e.clientX - cx, e.clientY - cy);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!active || e.pointerId !== id) return;
+    setStick(e.clientX - cx, e.clientY - cy);
+  });
+  el.addEventListener("pointerup", (e) => {
+    if (e.pointerId !== id) return;
+    active = false; id = null;
+    resetStick();
+  });
+  el.addEventListener("pointercancel", () => { active=false; id=null; resetStick(); });
+
+  return val;
+}
+
+const moveJoy = makeJoystick(document.getElementById("move"));
+const lookJoy = makeJoystick(document.getElementById("look"));
+
+// Teleport buttons
+const groundBtn = document.getElementById("ground");
+const upBtn = document.getElementById("up");
+const resetBtn = document.getElementById("reset");
+
+function teleport(which) {
+  // These are decent starting points for the generated model:
+  if (which === "ground") yaw.position.set(0.0, -2.75 + 1.6, 1.8);
+  if (which === "up") yaw.position.set(0.0, 0.25 + 1.6, 1.8);
+}
+groundBtn.onclick = () => teleport("ground");
+upBtn.onclick = () => teleport("up");
+resetBtn.onclick = () => { yaw.rotation.set(0,0,0); pitch.rotation.set(0,0,0); teleport("ground"); };
+teleport("ground");
+
+let last = performance.now();
+function animate(t) {
+  const dt = Math.min(0.05, (t-last)/1000); last=t;
+
+  // Look: right joystick
+  const lookSpeed = 2.2; // rad/sec
+  yaw.rotation.y -= lookJoy.x * lookSpeed * dt;
+  pitch.rotation.x -= lookJoy.y * lookSpeed * dt;
+  pitch.rotation.x = Math.max(-1.2, Math.min(1.2, pitch.rotation.x));
+
+  // Move: left joystick (relative to yaw)
+  const speed = 2.0; // m/s
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(yaw.quaternion);
+  const right = new THREE.Vector3(1,0,0).applyQuaternion(yaw.quaternion);
+  forward.y = 0; right.y = 0;
+  forward.normalize(); right.normalize();
+
+  const move = new THREE.Vector3();
+  move.addScaledVector(forward, -moveJoy.y);
+  move.addScaledVector(right, moveJoy.x);
+  if (move.lengthSq() > 1e-6) move.normalize();
+
+  yaw.position.addScaledVector(move, speed * dt);
+
+  // Basic "keep inside" gentle clamp (not perfect collision)
+  yaw.position.x = Math.max(-2.6, Math.min(2.6, yaw.position.x));
+  yaw.position.z = Math.max(-3.5, Math.min(3.5, yaw.position.z));
+  // keep on a floor band (you can still teleport)
+  yaw.position.y = Math.max(-1.2, Math.min(2.0, yaw.position.y));
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
