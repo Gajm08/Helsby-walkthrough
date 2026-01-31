@@ -76,7 +76,7 @@ scene.add(floor);
 
 let model;
 const loader = new GLTFLoader();
-loader.load("./helsby_model_v3.glb", (gltf) => {
+loader.load("./helsby_model.glb", (gltf) => {
   model = gltf.scene;
   model.traverse(o => {
     if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; }
